@@ -43,8 +43,8 @@ def split(values, cond):
     return [v for c, v in head if c], [v for c, v in tail if not c]
 
 
-@asyncio.coroutine
-def async_job(verb, job, threadpool, locks, event_queue, log_path):
+# @asyncio.coroutine
+async def async_job(verb, job, threadpool, locks, event_queue, log_path):
     """Run a sequence of Stages from a Job and collect their output.
 
     :param job: A Job instance
@@ -69,8 +69,8 @@ def async_job(verb, job, threadpool, locks, event_queue, log_path):
 
         # Check for stage synchronization lock
         if stage.locked_resource is not None:
-            lock = locks.setdefault(stage.locked_resource, asyncio.Lock())
-            yield from lock
+            lock = locks.setdefault(stage.locked_resource, asyncio.Lock())            
+            await lock.acquire()
         else:
             lock = FakeLock()
 
@@ -79,7 +79,7 @@ def async_job(verb, job, threadpool, locks, event_queue, log_path):
             if stage.occupy_job:
                 if not occupying_job:
                     while job_server.try_acquire() is None:
-                        yield from asyncio.sleep(0.05)
+                        await asyncio.sleep(0.05)
                     occupying_job = True
             else:
                 if occupying_job:
@@ -103,16 +103,16 @@ def async_job(verb, job, threadpool, locks, event_queue, log_path):
                             # Get the logger
                             protocol_type = stage.logger_factory(verb, job.jid, stage.label, event_queue, log_path)
                             # Start asynchroonous execution
-                            transport, logger = yield from (
+                            transport, logger = await (
                                 async_execute_process(
                                     protocol_type,
-                                    **stage.async_execute_process_kwargs))
+                                    **stage.async_execute_process_kwargs))                                    
                             break
                         except OSError as exc:
                             if 'Text file busy' in str(exc):
                                 # This is a transient error, try again shortly
                                 # TODO: report the file causing the problem (exc.filename)
-                                yield from asyncio.sleep(0.01)
+                                await asyncio.sleep(0.01)
                                 continue
                             raise
 
@@ -125,7 +125,7 @@ def async_job(verb, job, threadpool, locks, event_queue, log_path):
                         **stage.async_execute_process_kwargs))
 
                     # Asynchronously yield until this command is completed
-                    retcode = yield from logger.complete
+                    retcode = await logger.complete
                 except:  # noqa: E722
                     # Bare except is permissable here because the set of errors which the CommandState might raise
                     # is unbounded. We capture the traceback here and save it to the build's log files.
@@ -137,7 +137,7 @@ def async_job(verb, job, threadpool, locks, event_queue, log_path):
                 logger = IOBufferLogger(verb, job.jid, stage.label, event_queue, log_path)
                 try:
                     # Asynchronously yield until this function is completed
-                    retcode = yield from get_loop().run_in_executor(
+                    retcode = await get_loop().run_in_executor(
                         threadpool,
                         stage.function,
                         logger,
